@@ -9,6 +9,9 @@ import chromadb
 from chromadb.config import Settings as ChromaSettings
 from sentence_transformers import SentenceTransformer
 
+import os
+os.environ["HF_HUB_DISABLE_DOWNLOAD_WARNINGS"] = "1"
+
 from localmind.config import Config
 
 

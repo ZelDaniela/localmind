@@ -52,12 +52,21 @@ class Config:
         with open(config_path) as f:
             data = yaml.safe_load(f)
 
+        if not data:
+            return cls()
+
+        storage_data = data.get("storage") or {}
+        rag_data = data.get("rag") or {}
+        agents_data = data.get("agents") or {}
+        ollama_data = agents_data.get("ollama") or {}
+        claude_data = agents_data.get("claude") or {}
+
         return cls(
-            storage=StorageConfig(**data.get("storage", {})),
-            rag=RAGConfig(**data.get("rag", {})),
+            storage=StorageConfig(**storage_data),
+            rag=RAGConfig(**rag_data),
             agents=AgentConfig(
-                ollama=OllamaConfig(**data.get("agents", {}).get("ollama", {})),
-                claude=ClaudeConfig(**data.get("agents", {}).get("claude", {})),
+                ollama=OllamaConfig(**ollama_data),
+                claude=ClaudeConfig(**claude_data),
             ),
         )
 

@@ -66,6 +66,9 @@ class RAGPipeline:
         chunk_size = self.memory.config.rag.chunk_size
         chunk_overlap = self.memory.config.rag.chunk_overlap
 
+        if chunk_overlap >= chunk_size:
+            chunk_overlap = max(0, chunk_size - 1)
+
         chunks = []
         start = 0
 
@@ -82,9 +85,6 @@ class RAGPipeline:
                 chunks.append(chunk)
 
             start += chunk_size - chunk_overlap
-
-            if start >= len(text):
-                break
 
         return chunks
 

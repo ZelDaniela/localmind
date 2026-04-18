@@ -195,9 +195,21 @@ class MemoryStore:
         cursor = conn.cursor()
 
         if project:
-            cursor.execute(
-                "DELETE FROM memories WHERE metadata LIKE ?", (f'%"project": "{project}"%',)
-            )
+            try:
+                project_filter = f'%"project":"{project}"%'
+                cursor.execute(
+                    "DELETE FROM memories WHERE metadata LIKE ? ESCAPE ''", (project_filter,)
+                )
+            except sqlite3.OperationalError:
+                cursor.execute("SELECT id, metadata FROM memories")
+                rows = cursor.fetchall()
+                for row in rows:
+                    try:
+                        meta = json.loads(row[1])
+                        if meta.get("project") == project:
+                            cursor.execute("DELETE FROM memories WHERE id = ?", (row[0],))
+                    except (json.JSONDecodeError, KeyError):
+                        continue
         else:
             cursor.execute("DELETE FROM memories")
 

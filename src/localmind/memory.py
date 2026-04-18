@@ -153,22 +153,25 @@ class MemoryStore:
         }
 
     def delete(self, entry_id: str) -> bool:
+        deleted = False
+
         import sqlite3
 
         conn = sqlite3.connect(self.sqlite_path)
         cursor = conn.cursor()
         cursor.execute("DELETE FROM memories WHERE id = ?", (entry_id,))
         conn.commit()
-        deleted_sqlite = cursor.rowcount > 0
+        if cursor.rowcount > 0:
+            deleted = True
         conn.close()
 
         try:
             self.collection.delete(ids=[entry_id])
-            deleted_chroma = True
+            deleted = True
         except Exception:
-            deleted_chroma = False
+            pass
 
-        return deleted_sqlite or deleted_chroma
+        return deleted
 
     def list_all(
         self, limit: int = 100, project: Optional[str] = None

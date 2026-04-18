@@ -61,6 +61,9 @@ class Config:
         ollama_data = agents_data.get("ollama") or {}
         claude_data = agents_data.get("claude") or {}
 
+        if "path" in storage_data and isinstance(storage_data["path"], str):
+            storage_data["path"] = Path(storage_data["path"])
+
         return cls(
             storage=StorageConfig(**storage_data),
             rag=RAGConfig(**rag_data),

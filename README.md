@@ -143,4 +143,4 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ---
 
-⭐ Star us on GitHub if this project helps you!
+⭐ Star if this project helps you!

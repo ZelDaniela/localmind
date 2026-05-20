@@ -1,6 +1,7 @@
 """CLI for LocalMind - persistent memory for AI agents."""
 
 import secrets
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -269,3 +270,73 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+@app.command()
+def mcp(
+    http: bool = typer.Option(False, "--http", help="Use HTTP/SSE transport instead of stdio"),
+    host: str = typer.Option("127.0.0.1", "--host", help="HTTP server host"),
+    port: int = typer.Option(8001, "--port", help="HTTP server port"),
+) -> None:
+    """Start the LocalMind MCP server for Claude Code and other MCP agents.
+
+    Default transport is stdio (required by Claude Code).
+    Use --http for HTTP/SSE transport.
+
+    Claude Code configuration (~/.claude/claude_desktop_config.json):
+
+    \b
+    {
+      "mcpServers": {
+        "localmind": {
+          "command": "localmind",
+          "args": ["mcp"]
+        }
+      }
+    }
+    """
+    from localmind.mcp_server import run_stdio, run_http
+
+    if http:
+        console.print(f"[green]✓[/green] LocalMind MCP HTTP server: http://{host}:{port}")
+        run_http(host=host, port=port)
+    else:
+        # stdio — don't print anything to stdout, it breaks the protocol
+        run_stdio()
+
+
+@app.command()
+def mcp(
+    sse: bool = typer.Option(False, "--sse", help="Use SSE transport instead of stdio"),
+    host: str = typer.Option("127.0.0.1", "--host", help="SSE server host"),
+    port: int = typer.Option(8001, "--port", help="SSE server port"),
+) -> None:
+    """Start the LocalMind MCP server (for Claude Code and other MCP agents).
+
+    \b
+    Stdio mode (default, for Claude Code):
+      localmind mcp
+
+    \b
+    SSE mode (for web-based agents):
+      localmind mcp --sse --port 8001
+
+    \b
+    Claude Code config (~/.claude/claude_desktop_config.json):
+      {
+        "mcpServers": {
+          "localmind": {
+            "command": "localmind",
+            "args": ["mcp"]
+          }
+        }
+      }
+    """
+    from localmind.mcp_server import run_stdio, run_sse
+
+    if sse:
+        console.print(f"[green]✓[/green] LocalMind MCP server (SSE) starting on http://{host}:{port}/mcp")
+        run_sse(host=host, port=port)
+    else:
+        console.print("[green]✓[/green] LocalMind MCP server (stdio) starting…", file=sys.stderr)
+        run_stdio()

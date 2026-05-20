@@ -1,3 +1,7 @@
+"""CLI for LocalMind - persistent memory for AI agents."""
+
+import secrets
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -10,28 +14,46 @@ from localmind.memory import MemoryStore
 from localmind.rag import RAGPipeline
 from localmind.agents import AgentRegistry
 
-app = typer.Typer(help="LocalMind - Persistent memory for AI agents")
+app = typer.Typer(
+    help="LocalMind 🧠 — Persistent memory for local AI agents. 100% offline.",
+    no_args_is_help=True,
+)
 console = Console()
 
 
 @app.command()
-def init():
+def init() -> None:
     """Initialize LocalMind configuration and storage."""
     config = Config.load()
     config.storage.path.mkdir(parents=True, exist_ok=True)
-    config.save()
-    console.print("[green]✓[/green] LocalMind initialized at ~/.localmind/")
+    config_path = Path.home() / ".localmind" / "config.yaml"
+    config.save(config_path)
+    console.print(f"[green]✓[/green] LocalMind v{__version__} initialized")
+    console.print(f"  Config : {config_path}")
+    console.print(f"  Storage: {config.storage.path}")
+    console.print("\n[dim]Run [bold]localmind serve[/bold] to start the API server.[/dim]")
 
 
 @app.command()
 def add(
     content: str = typer.Argument(..., help="Content to remember"),
     project: Optional[str] = typer.Option(None, "--project", "-p", help="Project name"),
-):
+    metadata: Optional[str] = typer.Option(None, "--meta", "-m", help='JSON metadata, e.g. \'{"tag":"work"}\''),
+) -> None:
     """Add a memory entry."""
+    import json as _json
+
     memory = MemoryStore()
-    entry_id = memory.add(content, project=project)
-    console.print(f"[green]✓[/green] Added memory: {entry_id}")
+    meta = {}
+    if metadata:
+        try:
+            meta = _json.loads(metadata)
+        except _json.JSONDecodeError:
+            console.print("[red]✗[/red] Invalid JSON for --meta")
+            raise typer.Exit(1)
+
+    entry_id = memory.add(content, meta or None, project=project)
+    console.print(f"[green]✓[/green] Memory added [cyan]{entry_id}[/cyan]")
 
 
 @app.command()
@@ -39,8 +61,8 @@ def search(
     query: str = typer.Argument(..., help="Search query"),
     project: Optional[str] = typer.Option(None, "--project", "-p", help="Project filter"),
     limit: int = typer.Option(5, "--limit", "-n", help="Number of results"),
-):
-    """Search memories."""
+) -> None:
+    """Search memories using semantic similarity."""
     memory = MemoryStore()
     results = memory.search(query, n_results=limit, project=project)
 
@@ -48,26 +70,33 @@ def search(
         console.print("[yellow]No memories found[/yellow]")
         return
 
-    table = Table(title="Search Results")
-    table.add_column("ID", style="cyan")
+    table = Table(title=f"Search: '{query}'", show_lines=True)
+    table.add_column("ID", style="cyan", no_wrap=True)
     table.add_column("Content", style="white")
-    table.add_column("Distance", style="magenta")
+    table.add_column("Score", style="magenta", justify="right")
+    table.add_column("Project", style="blue")
 
     for result in results:
+        distance = result.get("distance")
+        score = f"{1 - distance:.2f}" if distance is not None else "N/A"
+        content_preview = result["content"]
+        if len(content_preview) > 80:
+            content_preview = content_preview[:80] + "…"
         table.add_row(
             result["id"][:8],
-            result["content"][:50] + "...",
-            f"{result.get('distance', 0):.3f}" if result.get("distance") else "N/A",
+            content_preview,
+            score,
+            result["metadata"].get("project", "-"),
         )
 
     console.print(table)
 
 
-@app.command()
+@app.command(name="list")
 def list_memories(
     project: Optional[str] = typer.Option(None, "--project", "-p", help="Project filter"),
     limit: int = typer.Option(20, "--limit", "-n", help="Number of results"),
-):
+) -> None:
     """List all memories."""
     memory = MemoryStore()
     results = memory.list_all(limit=limit, project=project)
@@ -76,24 +105,35 @@ def list_memories(
         console.print("[yellow]No memories found[/yellow]")
         return
 
-    table = Table(title="All Memories")
-    table.add_column("ID", style="cyan")
+    table = Table(title="All Memories", show_lines=True)
+    table.add_column("ID", style="cyan", no_wrap=True)
     table.add_column("Content", style="white")
+    table.add_column("Project", style="blue")
+    table.add_column("Created", style="dim")
 
     for result in results:
-        table.add_row(result["id"][:8], result["content"][:60] + "...")
+        content_preview = result["content"]
+        if len(content_preview) > 70:
+            content_preview = content_preview[:70] + "…"
+        table.add_row(
+            result["id"][:8],
+            content_preview,
+            result["metadata"].get("project", "-"),
+            result["metadata"].get("created_at", "-")[:19],
+        )
 
     console.print(table)
+    console.print(f"[dim]{len(results)} memories shown[/dim]")
 
 
 @app.command()
-def delete(memory_id: str, force: bool = typer.Option(False, "--force", "-f")):
+def delete(
+    memory_id: str = typer.Argument(..., help="Memory ID to delete"),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+) -> None:
     """Delete a memory entry."""
     if not force:
-        confirm = typer.confirm(f"Delete memory {memory_id}?")
-        if not confirm:
-            console.print("[yellow]Cancelled[/yellow]")
-            return
+        typer.confirm(f"Delete memory {memory_id}?", abort=True)
 
     memory = MemoryStore()
     deleted = memory.delete(memory_id)
@@ -102,19 +142,18 @@ def delete(memory_id: str, force: bool = typer.Option(False, "--force", "-f")):
         console.print(f"[green]✓[/green] Deleted: {memory_id}")
     else:
         console.print(f"[red]✗[/red] Not found: {memory_id}")
+        raise typer.Exit(1)
 
 
 @app.command()
 def clear(
     project: Optional[str] = typer.Option(None, "--project", "-p", help="Project to clear"),
-    force: bool = typer.Option(False, "--force", "-f"),
-):
-    """Clear all memories."""
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+) -> None:
+    """Clear memories (all or by project)."""
+    target = f"project '{project}'" if project else "ALL memories"
     if not force:
-        confirm = typer.confirm("Delete ALL memories?")
-        if not confirm:
-            console.print("[yellow]Cancelled[/yellow]")
-            return
+        typer.confirm(f"Delete {target}?", abort=True)
 
     memory = MemoryStore()
     count = memory.clear(project=project)
@@ -122,64 +161,109 @@ def clear(
 
 
 @app.command()
-def stats():
+def stats() -> None:
     """Show memory statistics."""
     memory = MemoryStore()
-    stats = memory.get_stats()
+    s = memory.get_stats()
 
     console.print("[bold]LocalMind Statistics[/bold]")
-    console.print(f"Total memories: {stats['total_memories']}")
-    console.print(f"Vector DB: {stats['vector_db']}")
-    console.print(f"Storage path: {stats['storage_path']}")
+    table = Table(show_header=False)
+    table.add_column("Key", style="dim")
+    table.add_column("Value", style="bold")
+    table.add_row("Total memories", str(s["total_memories"]))
+    table.add_row("Storage path", s["storage_path"])
+    table.add_row("SQLite size", f"{s['sqlite_size_kb']} KB")
+    table.add_row("ChromaDB size", f"{s['chroma_size_kb']} KB")
+    table.add_row("Embeddings model", s["embeddings_model"])
+    console.print(table)
 
 
 @app.command()
 def index(
     path: str = typer.Argument(..., help="File or directory to index"),
     project: str = typer.Option(..., "--project", "-p", help="Project name"),
-):
+) -> None:
     """Index a file or directory for RAG."""
-    from pathlib import Path
-
     memory = MemoryStore()
     rag = RAGPipeline(memory)
-
     path_obj = Path(path)
 
-    if path_obj.is_file():
-        result = rag.index_file(path_obj, project)
-        console.print(f"[green]✓[/green] Indexed {result['indexed']} chunks from file")
-    elif path_obj.is_dir():
-        result = rag.index_directory(path_obj, project)
-        console.print(f"[green]✓[/green] Indexed {result['indexed']} chunks")
-        if result["errors"]:
-            console.print(f"[yellow]Errors: {len(result['errors'])}[/yellow]")
-    else:
-        console.print(f"[red]✗[/red] Path not found: {path}")
+    with console.status(f"Indexing {path}…"):
+        if path_obj.is_file():
+            result = rag.index_file(path_obj, project)
+            console.print(f"[green]✓[/green] Indexed [cyan]{result['indexed']}[/cyan] chunks from file")
+        elif path_obj.is_dir():
+            result = rag.index_directory(path_obj, project)
+            console.print(f"[green]✓[/green] Indexed [cyan]{result['indexed']}[/cyan] chunks")
+            if result["errors"]:
+                console.print(f"[yellow]⚠[/yellow] {len(result['errors'])} file(s) had errors")
+        else:
+            console.print(f"[red]✗[/red] Path not found: {path}")
+            raise typer.Exit(1)
+
+
+@app.command()
+def export(
+    output: str = typer.Argument(..., help="Output JSON file path"),
+    project: Optional[str] = typer.Option(None, "--project", "-p", help="Project filter"),
+) -> None:
+    """Export memories to a JSON file."""
+    memory = MemoryStore()
+    output_path = Path(output)
+    count = memory.export_json(output_path, project=project)
+    console.print(f"[green]✓[/green] Exported {count} memories to {output_path}")
+
+
+@app.command(name="import")
+def import_memories(
+    input_file: str = typer.Argument(..., help="Input JSON file path"),
+    project: Optional[str] = typer.Option(None, "--project", "-p", help="Override project"),
+) -> None:
+    """Import memories from a JSON file."""
+    memory = MemoryStore()
+    input_path = Path(input_file)
+    if not input_path.exists():
+        console.print(f"[red]✗[/red] File not found: {input_file}")
+        raise typer.Exit(1)
+    count = memory.import_json(input_path, project=project)
+    console.print(f"[green]✓[/green] Imported {count} memories")
+
+
+@app.command()
+def keygen() -> None:
+    """Generate a secure API key for the server."""
+    key = secrets.token_urlsafe(32)
+    console.print(f"[bold]Generated API key:[/bold]\n[cyan]{key}[/cyan]")
+    console.print("\n[dim]Add to ~/.localmind/config.yaml:[/dim]")
+    console.print("[dim]security:\\n  api_key_enabled: true\\n  api_key: " + key + "[/dim]")
+    console.print("\n[dim]Or set env var: LOCALMIND_API_KEY=" + key + "[/dim]")
 
 
 @app.command()
 def serve(
-    host: str = typer.Option("0.0.0.0", "--host", help="Server host"),
+    host: str = typer.Option("127.0.0.1", "--host", help="Server host (default: localhost only)"),
     port: int = typer.Option(8000, "--port", help="Server port"),
-):
+    reload: bool = typer.Option(False, "--reload", help="Auto-reload on code changes (dev mode)"),
+) -> None:
     """Start the LocalMind API server."""
     import uvicorn
-
     from localmind.server import create_app
 
-    app = create_app()
-    console.print(f"[green]✓[/green] Starting server on {host}:{port}")
-    uvicorn.run(app, host=host, port=port)
+    server_app = create_app()
+    console.print(f"[green]✓[/green] LocalMind v{__version__} API starting")
+    console.print(f"  Listening: http://{host}:{port}")
+    console.print(f"  Docs     : http://{host}:{port}/docs")
+    console.print("[dim]Press Ctrl+C to stop.[/dim]\n")
+    uvicorn.run(server_app, host=host, port=port, reload=reload)
 
 
 @app.command()
-def version():
+def version() -> None:
     """Show version."""
     console.print(f"LocalMind v{__version__}")
 
 
-def main():
+def main() -> None:
     app()
 
 

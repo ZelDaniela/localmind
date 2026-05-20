@@ -1,9 +1,13 @@
+"""Persistent memory store for LocalMind."""
+
 import hashlib
 import json
+import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Generator, Optional
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
@@ -27,6 +31,7 @@ class MemoryStore:
         self._init_storage()
         self._init_vector_store()
         self._init_embeddings()
+        self._ensure_schema()
 
     def _init_storage(self) -> None:
         self.data_path = self.config.storage.path
@@ -46,6 +51,33 @@ class MemoryStore:
     def _init_embeddings(self) -> None:
         self.embeddings = SentenceTransformer(self.config.rag.embeddings)
 
+    @contextmanager
+    def _db(self) -> Generator[sqlite3.Cursor, None, None]:
+        """Context manager for safe SQLite access."""
+        conn = sqlite3.connect(self.sqlite_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            cursor = conn.cursor()
+            yield cursor
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _ensure_schema(self) -> None:
+        """Create tables if they don't exist."""
+        with self._db() as cursor:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memories (
+                    id TEXT PRIMARY KEY,
+                    content TEXT NOT NULL,
+                    metadata TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+
     def _generate_id(self, content: str) -> str:
         return hashlib.sha256(content.encode()).hexdigest()[:16]
 
@@ -56,11 +88,12 @@ class MemoryStore:
         project: Optional[str] = None,
     ) -> str:
         entry_id = self._generate_id(content)
+        now = datetime.now().isoformat()
 
-        memory_metadata = metadata or {}
+        memory_metadata: dict[str, Any] = metadata or {}
         if project:
             memory_metadata["project"] = project
-        memory_metadata["created_at"] = datetime.now().isoformat()
+        memory_metadata["created_at"] = now
 
         self.collection.upsert(
             ids=[entry_id],
@@ -68,40 +101,16 @@ class MemoryStore:
             metadatas=[memory_metadata],
         )
 
-        self._save_to_sqlite(entry_id, content, memory_metadata)
+        with self._db() as cursor:
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO memories (id, content, metadata, updated_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (entry_id, content, json.dumps(memory_metadata), now),
+            )
 
         return entry_id
-
-    def _save_to_sqlite(
-        self, entry_id: str, content: str, metadata: dict
-    ) -> None:
-        import sqlite3
-
-        conn = sqlite3.connect(self.sqlite_path)
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS memories (
-                id TEXT PRIMARY KEY,
-                content TEXT NOT NULL,
-                metadata TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-
-        cursor.execute(
-            """
-            INSERT OR REPLACE INTO memories (id, content, metadata, updated_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (entry_id, content, json.dumps(metadata), datetime.now().isoformat()),
-        )
-
-        conn.commit()
-        conn.close()
 
     def search(
         self,
@@ -110,7 +119,6 @@ class MemoryStore:
         project: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         query_embedding = self.embeddings.encode([query]).tolist()
-
         where = {"project": project} if project else None
 
         results = self.collection.query(
@@ -152,22 +160,14 @@ class MemoryStore:
     def delete(self, entry_id: str) -> bool:
         self.collection.delete(ids=[entry_id])
 
-        import sqlite3
-
-        conn = sqlite3.connect(self.sqlite_path)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM memories WHERE id = ?", (entry_id,))
-        conn.commit()
-        deleted = cursor.rowcount > 0
-        conn.close()
-
-        return deleted
+        with self._db() as cursor:
+            cursor.execute("DELETE FROM memories WHERE id = ?", (entry_id,))
+            return cursor.rowcount > 0
 
     def list_all(
         self, limit: int = 100, project: Optional[str] = None
     ) -> list[dict[str, Any]]:
         where = {"project": project} if project else None
-
         result = self.collection.get(where=where, limit=limit)
 
         memories = []
@@ -187,29 +187,60 @@ class MemoryStore:
         if project:
             self.collection.delete(where={"project": project})
         else:
-            self.collection.delete(where=None)
+            # Delete all by fetching IDs first
+            all_ids = self.collection.get()["ids"]
+            if all_ids:
+                self.collection.delete(ids=all_ids)
 
-        import sqlite3
+        with self._db() as cursor:
+            if project:
+                cursor.execute(
+                    "DELETE FROM memories WHERE metadata LIKE ?",
+                    (f'%"project": "{project}"%',),
+                )
+            else:
+                cursor.execute("DELETE FROM memories")
+            return cursor.rowcount
 
-        conn = sqlite3.connect(self.sqlite_path)
-        cursor = conn.cursor()
+    def export_json(self, output_path: Path, project: Optional[str] = None) -> int:
+        """Export all memories to a JSON file."""
+        memories = self.list_all(limit=10000, project=project)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(memories, f, indent=2, ensure_ascii=False)
+        return len(memories)
 
-        if project:
-            cursor.execute(
-                "DELETE FROM memories WHERE metadata LIKE ?", (f'%"project": "{project}"%',)
-            )
-        else:
-            cursor.execute("DELETE FROM memories")
+    def import_json(self, input_path: Path, project: Optional[str] = None) -> int:
+        """Import memories from a JSON file."""
+        with open(input_path, encoding="utf-8") as f:
+            memories = json.load(f)
 
-        deleted = cursor.rowcount
-        conn.commit()
-        conn.close()
+        imported = 0
+        for mem in memories:
+            content = mem.get("content", "")
+            metadata = mem.get("metadata", {})
+            if project:
+                metadata["project"] = project
+            if content:
+                self.add(content, metadata)
+                imported += 1
 
-        return deleted
+        return imported
 
     def get_stats(self) -> dict[str, Any]:
+        db_size_bytes = self.sqlite_path.stat().st_size if self.sqlite_path.exists() else 0
+        chroma_path = self.data_path / "chroma"
+        chroma_size_bytes = (
+            sum(f.stat().st_size for f in chroma_path.rglob("*") if f.is_file())
+            if chroma_path.exists()
+            else 0
+        )
+
         return {
             "total_memories": self.collection.count(),
             "vector_db": self.config.storage.vector_db,
             "storage_path": str(self.data_path),
+            "sqlite_size_kb": round(db_size_bytes / 1024, 1),
+            "chroma_size_kb": round(chroma_size_bytes / 1024, 1),
+            "embeddings_model": self.config.rag.embeddings,
         }

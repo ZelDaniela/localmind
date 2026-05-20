@@ -1,6 +1,9 @@
+"""Configuration management for LocalMind."""
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
 import yaml
 
 
@@ -36,10 +39,19 @@ class AgentConfig:
 
 
 @dataclass
+class SecurityConfig:
+    api_key_enabled: bool = False
+    api_key: Optional[str] = None
+    rate_limit_enabled: bool = True
+    rate_limit_per_minute: int = 60
+
+
+@dataclass
 class Config:
     storage: StorageConfig = field(default_factory=StorageConfig)
     rag: RAGConfig = field(default_factory=RAGConfig)
     agents: AgentConfig = field(default_factory=AgentConfig)
+    security: SecurityConfig = field(default_factory=SecurityConfig)
 
     @classmethod
     def load(cls, config_path: Optional[Path] = None) -> "Config":
@@ -50,15 +62,27 @@ class Config:
             return cls()
 
         with open(config_path) as f:
-            data = yaml.safe_load(f)
+            data = yaml.safe_load(f) or {}
+
+        storage_data = data.get("storage", {})
+        if "path" in storage_data:
+            path_str = storage_data["path"]
+            if isinstance(path_str, str):
+                path_obj = Path(path_str).expanduser()
+                if not path_obj.is_absolute():
+                    path_obj = config_path.parent / path_obj
+                storage_data["path"] = path_obj
+
+        security_data = data.get("security", {})
 
         return cls(
-            storage=StorageConfig(**data.get("storage", {})),
+            storage=StorageConfig(**storage_data),
             rag=RAGConfig(**data.get("rag", {})),
             agents=AgentConfig(
                 ollama=OllamaConfig(**data.get("agents", {}).get("ollama", {})),
                 claude=ClaudeConfig(**data.get("agents", {}).get("claude", {})),
             ),
+            security=SecurityConfig(**security_data),
         )
 
     def save(self, config_path: Optional[Path] = None) -> None:
@@ -86,6 +110,12 @@ class Config:
                 "claude": {
                     "enabled": self.agents.claude.enabled,
                 },
+            },
+            "security": {
+                "api_key_enabled": self.security.api_key_enabled,
+                "api_key": self.security.api_key,
+                "rate_limit_enabled": self.security.rate_limit_enabled,
+                "rate_limit_per_minute": self.security.rate_limit_per_minute,
             },
         }
 

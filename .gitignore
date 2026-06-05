@@ -75,3 +75,9 @@ localmind.key
 # Real config (may contain API key) — commit only the example
 config.yaml
 !config.example.yaml
+
+# Downloads / archives
+*.tar.gz
+*.zip
+*.Zone.Identifier
+*:Zone.Identifier

@@ -1,5 +1,8 @@
-import json
-from abc import ABC, abstractmethod
+"""Agent connectors for LocalMind (Ollama, Claude)."""
+
+from __future__ import annotations
+
+import logging
 from typing import Any, Optional
 
 import requests
@@ -8,81 +11,72 @@ from localmind.config import Config
 from localmind.memory import MemoryStore
 from localmind.rag import RAGPipeline
 
-
-class BaseAgentConnector(ABC):
-    @abstractmethod
-    def chat(self, message: str, context: Optional[str] = None) -> str:
-        pass
+logger = logging.getLogger(__name__)
 
 
-class OllamaConnector(BaseAgentConnector):
-    def __init__(self, config: Config):
-        self.base_url = config.agents.ollama.base_url
+class OllamaAgent:
+    def __init__(self, config: Config) -> None:
+        self.base_url = config.agents.ollama.base_url.rstrip("/")
         self.model = config.agents.ollama.model
 
-    def chat(self, message: str, context: Optional[str] = None) -> str:
-        prompt = message
-        if context:
-            prompt = f"Context:\n{context}\n\nUser: {message}"
-
-        response = requests.post(
-            f"{self.base_url}/api/generate",
-            json={"model": self.model, "prompt": prompt, "stream": False},
-            timeout=120,
-        )
-
-        if response.status_code != 200:
-            raise RuntimeError(f"Ollama error: {response.text}")
-
-        return response.json().get("response", "")
-
     def is_available(self) -> bool:
         try:
-            response = requests.get(f"{self.base_url}/api/tags", timeout=5)
-            return response.status_code == 200
-        except requests.RequestException:
+            r = requests.get(f"{self.base_url}/api/tags", timeout=3)
+            return r.status_code == 200
+        except Exception:
             return False
 
-    def list_models(self) -> list[dict[str, Any]]:
+    def list_models(self) -> list[str]:
         try:
-            response = requests.get(f"{self.base_url}/api/tags", timeout=5)
-            if response.status_code == 200:
-                return response.json().get("models", [])
-        except requests.RequestException:
-            pass
-        return []
+            r = requests.get(f"{self.base_url}/api/tags", timeout=5)
+            data = r.json()
+            return [m["name"] for m in data.get("models", [])]
+        except Exception:
+            return []
+
+    def generate(self, prompt: str, context: str = "") -> str:
+        full_prompt = f"{context}\n\n{prompt}" if context else prompt
+        payload = {"model": self.model, "prompt": full_prompt, "stream": False}
+        try:
+            r = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=60)
+            return r.json().get("response", "")
+        except Exception as e:
+            logger.error("Ollama generate failed: %s", e)
+            return f"Error: {e}"
 
 
-class ClaudeConnector(BaseAgentConnector):
-    def __init__(self, config: Config):
-        self.config = config
-
-    def chat(self, message: str, context: Optional[str] = None) -> str:
-        raise NotImplementedError(
-            "Claude CLI integration requires subprocess call. "
-            "Use CLI commands for now."
-        )
-
+class ClaudeAgent:
     def is_available(self) -> bool:
-        import shutil
+        try:
+            import anthropic  # noqa: F401
+            return True
+        except ImportError:
+            return False
 
-        return shutil.which("claude") is not None
+    def generate(self, prompt: str, context: str = "") -> str:
+        try:
+            import anthropic
+            client = anthropic.Anthropic()
+            system = f"Relevant context:\n{context}" if context else "You are a helpful assistant."
+            msg = client.messages.create(
+                model="claude-3-haiku-20240307",
+                max_tokens=1024,
+                system=system,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return msg.content[0].text
+        except Exception as e:
+            logger.error("Claude generate failed: %s", e)
+            return f"Error: {e}"
 
 
 class AgentRegistry:
-    def __init__(self, memory: MemoryStore, config: Config):
+    def __init__(self, memory: MemoryStore, config: Config) -> None:
         self.memory = memory
         self.config = config
+        self.ollama = OllamaAgent(config)
+        self.claude = ClaudeAgent()
         self.rag = RAGPipeline(memory)
-        self.ollama = OllamaConnector(config)
-        self.claude = ClaudeConnector(config)
-
-    def get_connector(self, agent_name: str) -> Optional[BaseAgentConnector]:
-        connectors = {
-            "ollama": self.ollama,
-            "claude": self.claude,
-        }
-        return connectors.get(agent_name)
 
     def chat_with_memory(
         self,
@@ -91,32 +85,27 @@ class AgentRegistry:
         use_rag: bool = True,
         project: Optional[str] = None,
     ) -> dict[str, Any]:
-        context = None
-
+        context = ""
         if use_rag:
             context = self.rag.get_relevant_context(message, project=project)
+
+        if agent == "ollama":
+            response = self.ollama.generate(message, context)
+        elif agent == "claude":
+            response = self.claude.generate(message, context)
         else:
-            memories = self.memory.search(message, project=project)
-            if memories:
-                context = "\n".join(m["content"] for m in memories)
+            return {"error": f"Unknown agent: {agent}. Use 'ollama' or 'claude'."}
 
-        connector = self.get_connector(agent)
-        if not connector:
-            raise ValueError(f"Unknown agent: {agent}")
-
-        if agent == "claude":
-            response = f"[Claude CLI required] Message: {message}\nContext: {context or 'None'}"
-        else:
-            response = connector.chat(message, context)
-
+        # Store the exchange as a memory
         self.memory.add(
-            content=f"User: {message}\nAgent: {response}",
-            metadata={"agent": agent, "type": "conversation"},
+            f"Q: {message}\nA: {response}",
+            metadata={"type": "conversation", "agent": agent},
             project=project,
         )
 
         return {
             "response": response,
-            "context_used": context is not None,
-            "memories_found": self.memory.search(message, project=project).__len__(),
+            "agent": agent,
+            "context_used": bool(context),
+            "project": project,
         }

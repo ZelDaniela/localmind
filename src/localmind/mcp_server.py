@@ -1,16 +1,12 @@
 """
-LocalMind MCP Server
-====================
-Implements the Model Context Protocol (MCP) so that Claude Code,
-Continue, and any other MCP-compatible agent can use LocalMind as
-a persistent memory tool — with zero manual REST calls.
+LocalMind MCP Server — Model Context Protocol integration.
 
 Usage
 -----
-  localmind mcp          # start stdio MCP server (for Claude Code)
-  localmind mcp --sse    # start SSE MCP server on port 8001
+  localmind mcp          # stdio transport (Claude Code)
+  localmind mcp --sse    # SSE transport on port 8001
 
-Claude Code integration (~/.claude/claude_desktop_config.json):
+Claude Code config (~/.claude/claude_desktop_config.json):
   {
     "mcpServers": {
       "localmind": {
@@ -32,36 +28,23 @@ from localmind.config import Config
 from localmind.memory import MemoryStore
 from localmind.rag import RAGPipeline
 
-# ── MCP protocol constants ───────────────────────────────────────────────────
-
 JSONRPC_VERSION = "2.0"
 MCP_VERSION = "2024-11-05"
-
-# ── Tool definitions (what Claude sees) ──────────────────────────────────────
 
 TOOLS: list[dict[str, Any]] = [
     {
         "name": "memory_add",
         "description": (
             "Store a memory or piece of information for later retrieval. "
-            "Use this to remember facts, decisions, user preferences, code context, "
-            "or anything that should persist across sessions."
+            "Use this to remember facts, decisions, user preferences, or any "
+            "context that should persist across sessions."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "content": {
-                    "type": "string",
-                    "description": "The content to remember.",
-                },
-                "project": {
-                    "type": "string",
-                    "description": "Optional project/namespace to scope this memory (e.g. 'myapp').",
-                },
-                "metadata": {
-                    "type": "object",
-                    "description": "Optional key-value metadata to attach (e.g. {\"tag\": \"bug\"}).",
-                },
+                "content": {"type": "string", "description": "The content to remember."},
+                "project": {"type": "string", "description": "Optional project/namespace (e.g. 'myapp')."},
+                "metadata": {"type": "object", "description": "Optional key-value metadata."},
             },
             "required": ["content"],
         },
@@ -76,41 +59,21 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "What to search for.",
-                },
-                "n_results": {
-                    "type": "integer",
-                    "description": "Number of results to return (1-20, default 5).",
-                    "default": 5,
-                },
-                "project": {
-                    "type": "string",
-                    "description": "Optional project/namespace filter.",
-                },
+                "query": {"type": "string", "description": "What to search for."},
+                "n_results": {"type": "integer", "description": "Number of results (1-20, default 5).", "default": 5},
+                "project": {"type": "string", "description": "Optional project/namespace filter."},
             },
             "required": ["query"],
         },
     },
     {
         "name": "memory_list",
-        "description": (
-            "List stored memories, optionally filtered by project. "
-            "Use this for an overview of what LocalMind remembers."
-        ),
+        "description": "List stored memories, optionally filtered by project.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project": {
-                    "type": "string",
-                    "description": "Optional project/namespace filter.",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max memories to return (default 20).",
-                    "default": 20,
-                },
+                "project": {"type": "string", "description": "Optional project/namespace filter."},
+                "limit": {"type": "integer", "description": "Max memories to return (default 20).", "default": 20},
             },
         },
     },
@@ -120,43 +83,31 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "id": {
-                    "type": "string",
-                    "description": "The memory ID to delete (from memory_search or memory_list).",
-                },
+                "id": {"type": "string", "description": "The memory ID to delete."},
             },
             "required": ["id"],
         },
     },
     {
         "name": "memory_stats",
-        "description": "Get statistics about LocalMind's storage (total memories, disk usage, model).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-        },
+        "description": "Get statistics about LocalMind storage (total memories, disk usage, model).",
+        "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "index_directory",
         "description": (
-            "Index a local directory or file so its content can be searched via memory_search. "
+            "Index a local directory or file so its content can be retrieved via memory_search. "
             "Useful for giving the agent context about a codebase or document collection."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Absolute path to the file or directory to index.",
-                },
-                "project": {
-                    "type": "string",
-                    "description": "Project/namespace to store indexed content under.",
-                },
+                "path": {"type": "string", "description": "Absolute path to the file or directory."},
+                "project": {"type": "string", "description": "Project/namespace for indexed content."},
                 "extensions": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "File extensions to include, e.g. [\".py\", \".md\"]. Defaults to common code/doc types.",
+                    "description": "File extensions to include (e.g. [\".py\", \".md\"]).",
                 },
             },
             "required": ["path", "project"],
@@ -165,17 +116,11 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
-# ── Handler ───────────────────────────────────────────────────────────────────
-
 class MCPHandler:
-    """Handles MCP JSON-RPC requests and dispatches to LocalMind."""
-
     def __init__(self) -> None:
         config = Config.load()
         self.memory = MemoryStore(config)
         self.rag = RAGPipeline(self.memory)
-
-    # ── Tool dispatch ────────────────────────────────────────────────────────
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         dispatch = {
@@ -197,11 +142,7 @@ class MCPHandler:
             metadata=args.get("metadata"),
             project=args.get("project"),
         )
-        return {
-            "success": True,
-            "id": entry_id,
-            "message": f"Memory stored with ID {entry_id}.",
-        }
+        return {"success": True, "id": entry_id, "message": f"Memory stored with ID {entry_id}."}
 
     def _memory_search(self, args: dict[str, Any]) -> dict[str, Any]:
         n = max(1, min(args.get("n_results", 5), 20))
@@ -210,7 +151,6 @@ class MCPHandler:
             n_results=n,
             project=args.get("project"),
         )
-        # Format for readability in agent context window
         formatted = []
         for r in results:
             score = round(1 - r["distance"], 3) if r.get("distance") is not None else None
@@ -219,10 +159,7 @@ class MCPHandler:
                 "content": r["content"],
                 "score": score,
                 "project": r["metadata"].get("project"),
-                "metadata": {
-                    k: v for k, v in r["metadata"].items()
-                    if k not in ("project", "created_at")
-                },
+                "metadata": {k: v for k, v in r["metadata"].items() if k not in ("project", "created_at")},
             })
         return {"results": formatted, "count": len(formatted)}
 
@@ -259,12 +196,15 @@ class MCPHandler:
         project = args["project"]
         extensions = args.get("extensions")
 
-        if path.is_file():
-            result = self.rag.index_file(path, project)
-        elif path.is_dir():
-            result = self.rag.index_directory(path, project, extensions)
-        else:
-            return {"success": False, "message": f"Path not found: {path}"}
+        try:
+            if path.is_file():
+                result = self.rag.index_file(path, project)
+            elif path.is_dir():
+                result = self.rag.index_directory(path, project, extensions)
+            else:
+                return {"success": False, "message": f"Path not found: {path}"}
+        except ValueError as e:
+            return {"success": False, "message": str(e)}
 
         return {
             "success": True,
@@ -273,13 +213,10 @@ class MCPHandler:
             "errors": result.get("errors", []),
         }
 
-    # ── JSON-RPC message handlers ────────────────────────────────────────────
-
     def handle(self, message: dict[str, Any]) -> dict[str, Any] | None:
         method = message.get("method", "")
         msg_id = message.get("id")
 
-        # Notifications (no id) — no response needed
         if msg_id is None and method not in ("initialize",):
             return None
 
@@ -300,37 +237,23 @@ class MCPHandler:
                 "serverInfo": {"name": "localmind", "version": "0.2.0"},
                 "capabilities": {"tools": {}},
             }
-
         if method == "tools/list":
             return {"tools": TOOLS}
-
         if method == "tools/call":
             name = params.get("name", "")
             arguments = params.get("arguments", {})
             tool_result = self.call_tool(name, arguments)
             return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": json.dumps(tool_result, indent=2, ensure_ascii=False),
-                    }
-                ],
+                "content": [{"type": "text", "text": json.dumps(tool_result, indent=2, ensure_ascii=False)}],
                 "isError": False,
             }
-
         if method == "ping":
             return {}
-
         raise ValueError(f"Method not found: {method}")
 
 
-# ── Transport: stdio (default for Claude Code) ────────────────────────────────
-
 def run_stdio() -> None:
-    """Run MCP server over stdin/stdout (Claude Code default)."""
     handler = MCPHandler()
-
-    # stderr for diagnostics — never stdout (that's the MCP channel)
     print("LocalMind MCP server started (stdio)", file=sys.stderr, flush=True)
 
     for raw_line in sys.stdin:
@@ -340,12 +263,12 @@ def run_stdio() -> None:
         try:
             message = json.loads(raw_line)
         except json.JSONDecodeError as e:
-            error_response = {
+            error_resp = {
                 "jsonrpc": JSONRPC_VERSION,
                 "id": None,
                 "error": {"code": -32700, "message": f"Parse error: {e}"},
             }
-            print(json.dumps(error_response), flush=True)
+            print(json.dumps(error_resp), flush=True)
             continue
 
         response = handler.handle(message)
@@ -353,17 +276,13 @@ def run_stdio() -> None:
             print(json.dumps(response), flush=True)
 
 
-# ── Transport: SSE (for web-based agents) ────────────────────────────────────
-
 def run_sse(host: str = "127.0.0.1", port: int = 8001) -> None:
-    """Run MCP server over HTTP + Server-Sent Events."""
     try:
         import uvicorn
         from fastapi import FastAPI, Request
-        from fastapi.responses import JSONResponse, StreamingResponse
-        import asyncio
+        from fastapi.responses import JSONResponse
     except ImportError:
-        print("fastapi and uvicorn are required for SSE mode.", file=sys.stderr)
+        print("fastapi and uvicorn required for SSE mode.", file=sys.stderr)
         sys.exit(1)
 
     handler = MCPHandler()

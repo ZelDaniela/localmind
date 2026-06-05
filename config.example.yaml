@@ -1,0 +1,26 @@
+# LocalMind configuration example
+# Copy to ~/.localmind/config.yaml and edit as needed.
+# DO NOT commit config.yaml if it contains your API key.
+
+storage:
+  path: ~/.localmind/data      # SQLite and ChromaDB location
+  vector_db: chroma
+  sqlite_db: localmind.db
+
+rag:
+  embeddings: sentence-transformers/all-MiniLM-L6-v2
+  chunk_size: 512
+  chunk_overlap: 50
+
+security:
+  api_key_enabled: false        # set true to require X-API-Key header
+  api_key: null                 # generate with: localmind keygen
+  rate_limit_enabled: true
+  rate_limit_per_minute: 60
+
+agents:
+  ollama:
+    base_url: http://localhost:11434
+    model: llama2
+  claude:
+    enabled: true

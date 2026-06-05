@@ -1,9 +1,8 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-
 *.so
-
 .Python
 build/
 develop-eggs/
@@ -21,26 +20,58 @@ wheels/
 .installed.cfg
 *.egg
 
+# Tests & coverage
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
 .tox/
 .nox/
+coverage.xml
 
+# Virtual envs
 .venv/
 venv/
 ENV/
+env/
 
+# Type checking & linting
 .mypy_cache/
 .ruff_cache/
-*.ruff_cache
 
+# Editors & OS
 .DS_Store
 .idea/
 .vscode/
 *.swp
 *.swo
+Thumbs.db
 
-.chroma/
+# ── LocalMind data — NEVER commit user data ───────────────────────────────────
+# SQLite databases (contain user memories)
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
+
+# ChromaDB vector store (can be hundreds of MB, contains embeddings)
+**/chroma/
+**/.chroma/
+
+# LocalMind runtime data directory
+data/
+.localmind/
+
+# Exported memory dumps
+*.memories.json
+
+# ── Secrets — NEVER commit ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.key
+localmind.key
+
+# Real config (may contain API key) — commit only the example
+config.yaml
+!config.example.yaml

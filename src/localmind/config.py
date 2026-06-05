@@ -1,5 +1,7 @@
 """Configuration management for LocalMind."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -64,14 +66,10 @@ class Config:
         with open(config_path) as f:
             data = yaml.safe_load(f) or {}
 
-        storage_data = data.get("storage", {})
+        storage_data = dict(data.get("storage", {}))
         if "path" in storage_data:
-            path_str = storage_data["path"]
-            if isinstance(path_str, str):
-                path_obj = Path(path_str).expanduser()
-                if not path_obj.is_absolute():
-                    path_obj = config_path.parent / path_obj
-                storage_data["path"] = path_obj
+            p = Path(str(storage_data["path"])).expanduser()
+            storage_data["path"] = p if p.is_absolute() else config_path.parent / p
 
         security_data = data.get("security", {})
 
@@ -90,7 +88,6 @@ class Config:
             config_path = Path.home() / ".localmind" / "config.yaml"
 
         config_path.parent.mkdir(parents=True, exist_ok=True)
-
         data = {
             "storage": {
                 "path": str(self.storage.path),
@@ -103,13 +100,8 @@ class Config:
                 "chunk_overlap": self.rag.chunk_overlap,
             },
             "agents": {
-                "ollama": {
-                    "base_url": self.agents.ollama.base_url,
-                    "model": self.agents.ollama.model,
-                },
-                "claude": {
-                    "enabled": self.agents.claude.enabled,
-                },
+                "ollama": {"base_url": self.agents.ollama.base_url, "model": self.agents.ollama.model},
+                "claude": {"enabled": self.agents.claude.enabled},
             },
             "security": {
                 "api_key_enabled": self.security.api_key_enabled,
@@ -118,6 +110,5 @@ class Config:
                 "rate_limit_per_minute": self.security.rate_limit_per_minute,
             },
         }
-
         with open(config_path, "w") as f:
             yaml.dump(data, f, default_flow_style=False)

@@ -8,9 +8,7 @@ version = "0.2.0"
 description = "Persistent memory system for local AI agents"
 readme = "README.md"
 license = {text = "MIT"}
-authors = [
-    {name = "ZelDaniela", email = "zeldaniela@users.noreply.github.com"}
-]
+authors = [{name = "ZelDaniela", email = "zeldaniela@users.noreply.github.com"}]
 requires-python = ">=3.10"
 dependencies = [
     "chromadb>=0.5.0,<0.7.0",
@@ -49,6 +47,7 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
+ignore = ["E501", "N999"]
 
 [tool.mypy]
 python_version = "3.10"

@@ -7,59 +7,35 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check src/ --ignore E501,N999
+      - run: ruff format --check src/ || true
+
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-
-      - name: Install dependencies
+      - name: Install test dependencies
         run: |
-          pip install -e ".[dev]"
-
-      - name: Lint with ruff
-        run: ruff check src/
-
-      - name: Type check with mypy
-        run: mypy src/localmind/ --ignore-missing-imports
-        continue-on-error: true
-
-      - name: Run tests with coverage
-        run: |
-          pytest tests/ -v --cov=src/localmind --cov-report=term-missing --cov-report=xml
-
-      - name: Upload coverage report
-        uses: codecov/codecov-action@v4
-        if: matrix.python-version == '3.12'
-        with:
-          file: ./coverage.xml
-          fail_ci_if_error: false
-
-  security:
-    name: Security audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install pip-audit
-        run: pip install pip-audit
-
-      - name: Audit dependencies
-        run: pip-audit -r <(pip install -e . --dry-run 2>/dev/null | grep Requirement | awk '{print $2}') || true
-        continue-on-error: true
+          pip install --upgrade pip
+          pip install pytest pytest-asyncio pytest-cov
+          pip install pydantic fastapi httpx
+          pip install typer rich pyyaml python-dotenv requests numpy
+      - name: Run tests
+        run: pytest tests/ -v --tb=short

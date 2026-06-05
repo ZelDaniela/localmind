@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -43,7 +42,7 @@ class AgentConfig:
 @dataclass
 class SecurityConfig:
     api_key_enabled: bool = False
-    api_key: Optional[str] = None
+    api_key: str | None = None
     rate_limit_enabled: bool = True
     rate_limit_per_minute: int = 60
 
@@ -56,7 +55,7 @@ class Config:
     security: SecurityConfig = field(default_factory=SecurityConfig)
 
     @classmethod
-    def load(cls, config_path: Optional[Path] = None) -> "Config":
+    def load(cls, config_path: Path | None = None) -> Config:
         if config_path is None:
             config_path = Path.home() / ".localmind" / "config.yaml"
 
@@ -83,7 +82,7 @@ class Config:
             security=SecurityConfig(**security_data),
         )
 
-    def save(self, config_path: Optional[Path] = None) -> None:
+    def save(self, config_path: Path | None = None) -> None:
         if config_path is None:
             config_path = Path.home() / ".localmind" / "config.yaml"
 
@@ -100,7 +99,10 @@ class Config:
                 "chunk_overlap": self.rag.chunk_overlap,
             },
             "agents": {
-                "ollama": {"base_url": self.agents.ollama.base_url, "model": self.agents.ollama.model},
+                "ollama": {
+                    "base_url": self.agents.ollama.base_url,
+                    "model": self.agents.ollama.model,
+                },
                 "claude": {"enabled": self.agents.claude.enabled},
             },
             "security": {

@@ -6,7 +6,6 @@ import os
 import re
 import secrets
 from pathlib import Path
-from typing import Optional
 
 from fastapi import HTTPException, Security, status
 from fastapi.security import APIKeyHeader
@@ -16,8 +15,15 @@ from localmind.config import Config
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 _BLOCKED_ROOTS: tuple[str, ...] = (
-    "/etc", "/sys", "/proc", "/dev", "/root", "/boot",
-    "/run", "/snap", "/lost+found",
+    "/etc",
+    "/sys",
+    "/proc",
+    "/dev",
+    "/root",
+    "/boot",
+    "/run",
+    "/snap",
+    "/lost+found",
 )
 
 # Project names: alphanumeric, dashes, underscores, max 64 chars
@@ -33,8 +39,8 @@ def generate_api_key() -> str:
 
 
 def get_api_key(
-    api_key_header: Optional[str] = Security(API_KEY_HEADER),
-) -> Optional[str]:
+    api_key_header: str | None = Security(API_KEY_HEADER),
+) -> str | None:
     """FastAPI dependency: validate API key when auth is enabled.
 
     Fails CLOSED — if auth is enabled but no key is configured, denies all requests.
@@ -92,7 +98,7 @@ def validate_path_safety(path_str: str) -> Path:
     return path
 
 
-def validate_project_name(project: Optional[str]) -> Optional[str]:
+def validate_project_name(project: str | None) -> str | None:
     """Ensure project name is a safe alphanumeric identifier."""
     if project is None:
         return None

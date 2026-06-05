@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
@@ -49,6 +49,7 @@ class ClaudeAgent:
     def is_available(self) -> bool:
         try:
             import anthropic  # noqa: F401
+
             return True
         except ImportError:
             return False
@@ -56,6 +57,7 @@ class ClaudeAgent:
     def generate(self, prompt: str, context: str = "") -> str:
         try:
             import anthropic
+
             client = anthropic.Anthropic()
             system = f"Relevant context:\n{context}" if context else "You are a helpful assistant."
             msg = client.messages.create(
@@ -83,7 +85,7 @@ class AgentRegistry:
         agent: str,
         message: str,
         use_rag: bool = True,
-        project: Optional[str] = None,
+        project: str | None = None,
     ) -> dict[str, Any]:
         context = ""
         if use_rag:

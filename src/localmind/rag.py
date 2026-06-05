@@ -4,31 +4,68 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from localmind.memory import MemoryStore
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_EXTENSIONS = [
-    ".py", ".js", ".ts", ".jsx", ".tsx",
-    ".md", ".txt", ".rst",
-    ".json", ".yaml", ".yml", ".toml",
-    ".html", ".css", ".sh", ".bash",
-    ".go", ".rs", ".java", ".cpp", ".c", ".h",
+    ".py",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+    ".md",
+    ".txt",
+    ".rst",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".html",
+    ".css",
+    ".sh",
+    ".bash",
+    ".go",
+    ".rs",
+    ".java",
+    ".cpp",
+    ".c",
+    ".h",
 ]
 
 DEFAULT_EXCLUDE_DIRS: set[str] = {
-    "node_modules", ".git", "__pycache__",
-    ".venv", "venv", "env",
-    "dist", "build", ".next", ".nuxt",
-    ".mypy_cache", ".ruff_cache", ".pytest_cache",
-    "coverage", "htmlcov", ".tox", ".eggs", "chroma",
+    "node_modules",
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "env",
+    "dist",
+    "build",
+    ".next",
+    ".nuxt",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytest_cache",
+    "coverage",
+    "htmlcov",
+    ".tox",
+    ".eggs",
+    "chroma",
 }
 
 _BLOCKED_ROOTS: tuple[str, ...] = (
-    "/etc", "/sys", "/proc", "/dev", "/root", "/boot",
-    "/run", "/snap", "/lost+found",
+    "/etc",
+    "/sys",
+    "/proc",
+    "/dev",
+    "/root",
+    "/boot",
+    "/run",
+    "/snap",
+    "/lost+found",
 )
 
 _MAX_FILE_BYTES = 2 * 1024 * 1024  # 2 MB per file
@@ -40,17 +77,14 @@ class RAGPipeline:
 
     def _is_safe_path(self, path: Path) -> bool:
         resolved = str(path.resolve())
-        return not any(
-            resolved == b or resolved.startswith(b + "/")
-            for b in _BLOCKED_ROOTS
-        )
+        return not any(resolved == b or resolved.startswith(b + "/") for b in _BLOCKED_ROOTS)
 
     def index_directory(
         self,
         directory: Path,
         project: str,
-        extensions: Optional[list[str]] = None,
-        exclude_dirs: Optional[set[str]] = None,
+        extensions: list[str] | None = None,
+        exclude_dirs: set[str] | None = None,
     ) -> dict[str, Any]:
         directory = Path(directory).resolve()
 
@@ -165,7 +199,7 @@ class RAGPipeline:
     def get_relevant_context(
         self,
         query: str,
-        project: Optional[str] = None,
+        project: str | None = None,
         max_tokens: int = 2000,
     ) -> str:
         if not query.strip():

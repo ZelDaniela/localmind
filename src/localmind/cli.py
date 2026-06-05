@@ -6,7 +6,6 @@ import json as _json
 import secrets
 import sys
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -16,7 +15,6 @@ from localmind import __version__
 from localmind.config import Config
 from localmind.memory import MemoryStore
 from localmind.rag import RAGPipeline
-from localmind.agents import AgentRegistry
 
 app = typer.Typer(
     help="LocalMind 🧠 — Persistent memory for local AI agents. 100% offline.",
@@ -44,8 +42,10 @@ def init() -> None:
 @app.command()
 def add(
     content: str = typer.Argument(..., help="Content to remember"),
-    project: Optional[str] = typer.Option(None, "--project", "-p"),
-    metadata: Optional[str] = typer.Option(None, "--meta", "-m", help='JSON metadata, e.g. \'{"tag":"work"}\''),
+    project: str | None = typer.Option(None, "--project", "-p"),
+    metadata: str | None = typer.Option(
+        None, "--meta", "-m", help='JSON metadata, e.g. \'{"tag":"work"}\''
+    ),
 ) -> None:
     """Add a memory entry."""
     meta: dict = {}
@@ -64,7 +64,7 @@ def add(
 @app.command()
 def search(
     query: str = typer.Argument(..., help="Search query"),
-    project: Optional[str] = typer.Option(None, "--project", "-p"),
+    project: str | None = typer.Option(None, "--project", "-p"),
     limit: int = typer.Option(5, "--limit", "-n"),
 ) -> None:
     """Search memories using semantic similarity."""
@@ -92,7 +92,7 @@ def search(
 
 @app.command(name="list")
 def list_memories(
-    project: Optional[str] = typer.Option(None, "--project", "-p"),
+    project: str | None = typer.Option(None, "--project", "-p"),
     limit: int = typer.Option(20, "--limit", "-n"),
 ) -> None:
     """List all memories."""
@@ -112,7 +112,8 @@ def list_memories(
     for r in results:
         preview = r["content"][:70] + ("…" if len(r["content"]) > 70 else "")
         table.add_row(
-            r["id"][:8], preview,
+            r["id"][:8],
+            preview,
             r["metadata"].get("project", "-"),
             r["metadata"].get("created_at", "-")[:19],
         )
@@ -140,7 +141,7 @@ def delete(
 
 @app.command()
 def clear(
-    project: Optional[str] = typer.Option(None, "--project", "-p"),
+    project: str | None = typer.Option(None, "--project", "-p"),
     force: bool = typer.Option(False, "--force", "-f"),
 ) -> None:
     """Clear memories (all or by project)."""
@@ -182,11 +183,15 @@ def index(
         try:
             if path_obj.is_file():
                 result = rag.index_file(path_obj, project)
-                console.print(f"[green]✓[/green] Indexed [cyan]{result['indexed']}[/cyan] chunks from file")
+                console.print(
+                    f"[green]✓[/green] Indexed [cyan]{result['indexed']}[/cyan] chunks from file"
+                )
             elif path_obj.is_dir():
                 result = rag.index_directory(path_obj, project)
-                console.print(f"[green]✓[/green] Indexed [cyan]{result['indexed']}[/cyan] chunks "
-                              f"([dim]{result['skipped']} skipped[/dim])")
+                console.print(
+                    f"[green]✓[/green] Indexed [cyan]{result['indexed']}[/cyan] chunks "
+                    f"([dim]{result['skipped']} skipped[/dim])"
+                )
                 if result["errors"]:
                     console.print(f"[yellow]⚠[/yellow] {len(result['errors'])} file(s) had errors")
             else:
@@ -200,7 +205,7 @@ def index(
 @app.command()
 def export(
     output: str = typer.Argument(..., help="Output JSON file path"),
-    project: Optional[str] = typer.Option(None, "--project", "-p"),
+    project: str | None = typer.Option(None, "--project", "-p"),
 ) -> None:
     """Export memories to a JSON file."""
     memory = MemoryStore()
@@ -211,7 +216,7 @@ def export(
 @app.command(name="import")
 def import_memories(
     input_file: str = typer.Argument(..., help="Input JSON file path"),
-    project: Optional[str] = typer.Option(None, "--project", "-p"),
+    project: str | None = typer.Option(None, "--project", "-p"),
 ) -> None:
     """Import memories from a JSON file."""
     input_path = Path(input_file)
@@ -260,7 +265,7 @@ def mcp(
         }
       }
     """
-    from localmind.mcp_server import run_stdio, run_sse
+    from localmind.mcp_server import run_sse, run_stdio
 
     if sse:
         console.print(f"[green]✓[/green] LocalMind MCP (SSE) on http://{host}:{port}/mcp")
@@ -278,6 +283,7 @@ def serve(
 ) -> None:
     """Start the LocalMind REST API server."""
     import uvicorn
+
     from localmind.server import create_app
 
     server_app = create_app()

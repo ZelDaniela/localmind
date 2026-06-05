@@ -6,10 +6,11 @@ import hashlib
 import json
 import logging
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Generator, Optional
+from typing import Any
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class MemoryStore:
-    def __init__(self, config: Optional[Config] = None) -> None:
+    def __init__(self, config: Config | None = None) -> None:
         self.config = config or Config.load()
         self._init_storage()
         self._init_vector_store()
@@ -86,8 +87,8 @@ class MemoryStore:
     def add(
         self,
         content: str,
-        metadata: Optional[dict[str, Any]] = None,
-        project: Optional[str] = None,
+        metadata: dict[str, Any] | None = None,
+        project: str | None = None,
     ) -> str:
         if not content or not content.strip():
             raise ValueError("content cannot be empty")
@@ -122,7 +123,7 @@ class MemoryStore:
         self,
         query: str,
         n_results: int = 5,
-        project: Optional[str] = None,
+        project: str | None = None,
     ) -> list[dict[str, Any]]:
         if not query or not query.strip():
             return []
@@ -144,16 +145,18 @@ class MemoryStore:
         memories = []
         if results["documents"] and results["documents"][0]:
             for i, doc in enumerate(results["documents"][0]):
-                memories.append({
-                    "id": results["ids"][0][i],
-                    "content": doc,
-                    "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
-                    "distance": results["distances"][0][i] if results["distances"] else None,
-                })
+                memories.append(
+                    {
+                        "id": results["ids"][0][i],
+                        "content": doc,
+                        "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
+                        "distance": results["distances"][0][i] if results["distances"] else None,
+                    }
+                )
 
         return memories
 
-    def get(self, entry_id: str) -> Optional[dict[str, Any]]:
+    def get(self, entry_id: str) -> dict[str, Any] | None:
         result = self.collection.get(ids=[entry_id])
         if not result["documents"]:
             return None
@@ -172,9 +175,7 @@ class MemoryStore:
             cursor.execute("DELETE FROM memories WHERE id = ?", (entry_id,))
         return True
 
-    def list_all(
-        self, limit: int = 100, project: Optional[str] = None
-    ) -> list[dict[str, Any]]:
+    def list_all(self, limit: int = 100, project: str | None = None) -> list[dict[str, Any]]:
         limit = max(1, min(limit, 10000))
         where = {"project": project} if project else None
         result = self.collection.get(where=where, limit=limit)
@@ -191,7 +192,7 @@ class MemoryStore:
             for i in range(len(result["documents"]))
         ]
 
-    def clear(self, project: Optional[str] = None) -> int:
+    def clear(self, project: str | None = None) -> int:
         if project:
             self.collection.delete(where={"project": project})
             with self._db() as cursor:
@@ -208,14 +209,14 @@ class MemoryStore:
                 cursor.execute("DELETE FROM memories")
                 return cursor.rowcount
 
-    def export_json(self, output_path: Path, project: Optional[str] = None) -> int:
+    def export_json(self, output_path: Path, project: str | None = None) -> int:
         memories = self.list_all(limit=10000, project=project)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(memories, f, indent=2, ensure_ascii=False)
         return len(memories)
 
-    def import_json(self, input_path: Path, project: Optional[str] = None) -> int:
+    def import_json(self, input_path: Path, project: str | None = None) -> int:
         with open(input_path, encoding="utf-8") as f:
             memories = json.load(f)
 
@@ -240,7 +241,8 @@ class MemoryStore:
         chroma_path = self.data_path / "chroma"
         chroma_size = (
             sum(f.stat().st_size for f in chroma_path.rglob("*") if f.is_file())
-            if chroma_path.exists() else 0
+            if chroma_path.exists()
+            else 0
         )
         return {
             "total_memories": self.collection.count(),

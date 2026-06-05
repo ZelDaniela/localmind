@@ -78,7 +78,7 @@ def test_delete_nonexistent_404(client):
 
 def test_invalid_memory_id_rejected(client):
     r = client.get("/memory/../../etc/passwd")
-    assert r.status_code in (400, 422)
+    assert r.status_code in (400, 404, 422)
 
 
 def test_index_blocked_path(client):

@@ -43,7 +43,10 @@ TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "content": {"type": "string", "description": "The content to remember."},
-                "project": {"type": "string", "description": "Optional project/namespace (e.g. 'myapp')."},
+                "project": {
+                    "type": "string",
+                    "description": "Optional project/namespace (e.g. 'myapp').",
+                },
                 "metadata": {"type": "object", "description": "Optional key-value metadata."},
             },
             "required": ["content"],
@@ -60,7 +63,11 @@ TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "What to search for."},
-                "n_results": {"type": "integer", "description": "Number of results (1-20, default 5).", "default": 5},
+                "n_results": {
+                    "type": "integer",
+                    "description": "Number of results (1-20, default 5).",
+                    "default": 5,
+                },
                 "project": {"type": "string", "description": "Optional project/namespace filter."},
             },
             "required": ["query"],
@@ -73,7 +80,11 @@ TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "project": {"type": "string", "description": "Optional project/namespace filter."},
-                "limit": {"type": "integer", "description": "Max memories to return (default 20).", "default": 20},
+                "limit": {
+                    "type": "integer",
+                    "description": "Max memories to return (default 20).",
+                    "default": 20,
+                },
             },
         },
     },
@@ -102,12 +113,18 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Absolute path to the file or directory."},
-                "project": {"type": "string", "description": "Project/namespace for indexed content."},
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path to the file or directory.",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project/namespace for indexed content.",
+                },
                 "extensions": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "File extensions to include (e.g. [\".py\", \".md\"]).",
+                    "description": 'File extensions to include (e.g. [".py", ".md"]).',
                 },
             },
             "required": ["path", "project"],
@@ -154,13 +171,17 @@ class MCPHandler:
         formatted = []
         for r in results:
             score = round(1 - r["distance"], 3) if r.get("distance") is not None else None
-            formatted.append({
-                "id": r["id"],
-                "content": r["content"],
-                "score": score,
-                "project": r["metadata"].get("project"),
-                "metadata": {k: v for k, v in r["metadata"].items() if k not in ("project", "created_at")},
-            })
+            formatted.append(
+                {
+                    "id": r["id"],
+                    "content": r["content"],
+                    "score": score,
+                    "project": r["metadata"].get("project"),
+                    "metadata": {
+                        k: v for k, v in r["metadata"].items() if k not in ("project", "created_at")
+                    },
+                }
+            )
         return {"results": formatted, "count": len(formatted)}
 
     def _memory_list(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -185,7 +206,9 @@ class MCPHandler:
         deleted = self.memory.delete(args["id"])
         return {
             "success": deleted,
-            "message": f"Memory {args['id']} deleted." if deleted else f"Memory {args['id']} not found.",
+            "message": f"Memory {args['id']} deleted."
+            if deleted
+            else f"Memory {args['id']} not found.",
         }
 
     def _memory_stats(self, _args: dict[str, Any]) -> dict[str, Any]:
@@ -244,7 +267,9 @@ class MCPHandler:
             arguments = params.get("arguments", {})
             tool_result = self.call_tool(name, arguments)
             return {
-                "content": [{"type": "text", "text": json.dumps(tool_result, indent=2, ensure_ascii=False)}],
+                "content": [
+                    {"type": "text", "text": json.dumps(tool_result, indent=2, ensure_ascii=False)}
+                ],
                 "isError": False,
             }
         if method == "ping":

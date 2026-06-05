@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,11 +24,60 @@ try:
     from slowapi import Limiter, _rate_limit_exceeded_handler
     from slowapi.errors import RateLimitExceeded
     from slowapi.util import get_remote_address
+
     limiter = Limiter(key_func=get_remote_address)
     RATE_LIMITING = True
 except ImportError:
     limiter = None  # type: ignore[assignment]
     RATE_LIMITING = False
+
+
+# ── Request models ────────────────────────────────────────────────────────
+
+class AddMemoryRequest(BaseModel):
+    content: str
+    metadata: dict[str, Any] | None = None
+    project: str | None = None
+
+    @field_validator("content")
+    @classmethod
+    def content_not_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("content cannot be empty")
+        return v
+
+class SearchRequest(BaseModel):
+    query: str
+    n_results: int = 5
+    project: str | None = None
+
+    @field_validator("query")
+    @classmethod
+    def query_not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("query cannot be empty")
+        return v.strip()
+
+    @field_validator("n_results")
+    @classmethod
+    def clamp_results(cls, v: int) -> int:
+        return max(1, min(v, 50))
+
+class IndexRequest(BaseModel):
+    path: str
+    project: str
+    extensions: list[str] | None = None
+
+class ChatRequest(BaseModel):
+    message: str
+    agent: str = "ollama"
+    use_rag: bool = True
+    project: str | None = None
+
+class ExportRequest(BaseModel):
+    output_path: str
+    project: str | None = None
 
 
 def create_app() -> FastAPI:
@@ -46,8 +94,10 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
-            "http://localhost", "http://127.0.0.1",
-            "http://localhost:8000", "http://127.0.0.1:8000",
+            "http://localhost",
+            "http://127.0.0.1",
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
         ],
         allow_credentials=True,
         allow_methods=["GET", "POST", "DELETE"],
@@ -58,57 +108,12 @@ def create_app() -> FastAPI:
         app.state.limiter = limiter
         app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
-    # ── Request models ────────────────────────────────────────────────────────
-
-    class AddMemoryRequest(BaseModel):
-        content: str
-        metadata: Optional[dict[str, Any]] = None
-        project: Optional[str] = None
-
-        @field_validator("content")
-        @classmethod
-        def content_not_empty(cls, v: str) -> str:
-            v = v.strip()
-            if not v:
-                raise ValueError("content cannot be empty")
-            return v
-
-    class SearchRequest(BaseModel):
-        query: str
-        n_results: int = 5
-        project: Optional[str] = None
-
-        @field_validator("query")
-        @classmethod
-        def query_not_empty(cls, v: str) -> str:
-            if not v.strip():
-                raise ValueError("query cannot be empty")
-            return v.strip()
-
-        @field_validator("n_results")
-        @classmethod
-        def clamp_results(cls, v: int) -> int:
-            return max(1, min(v, 50))
-
-    class IndexRequest(BaseModel):
-        path: str
-        project: str
-        extensions: Optional[list[str]] = None
-
-    class ChatRequest(BaseModel):
-        message: str
-        agent: str = "ollama"
-        use_rag: bool = True
-        project: Optional[str] = None
-
-    class ExportRequest(BaseModel):
-        output_path: str
-        project: Optional[str] = None
-
     # ── Dependencies ──────────────────────────────────────────────────────────
 
     def get_memory() -> MemoryStore:
-        return MemoryStore(config)
+        if not hasattr(app.state, "memory_instance") or app.state.memory_instance is None:
+            app.state.memory_instance = MemoryStore(config)
+        return app.state.memory_instance
 
     def get_rag(memory: MemoryStore = Depends(get_memory)) -> RAGPipeline:
         return RAGPipeline(memory)
@@ -129,7 +134,7 @@ def create_app() -> FastAPI:
     @app.get("/stats", tags=["system"])
     def stats(
         memory: MemoryStore = Depends(get_memory),
-        _: Optional[str] = Depends(get_api_key),
+        _: str | None = Depends(get_api_key),
     ) -> dict[str, Any]:
         return memory.get_stats()
 
@@ -137,7 +142,7 @@ def create_app() -> FastAPI:
     def add_memory(
         request: AddMemoryRequest,
         memory: MemoryStore = Depends(get_memory),
-        _: Optional[str] = Depends(get_api_key),
+        _: str | None = Depends(get_api_key),
     ) -> dict[str, str]:
         validate_content_size(request.content)
         validate_project_name(request.project)
@@ -146,35 +151,41 @@ def create_app() -> FastAPI:
 
     @app.get("/memory", tags=["memory"])
     def list_memories(
-        project: Optional[str] = Query(None),
+        project: str | None = Query(None),
         limit: int = Query(100, ge=1, le=1000),
         memory: MemoryStore = Depends(get_memory),
-        _: Optional[str] = Depends(get_api_key),
+        _: str | None = Depends(get_api_key),
     ) -> list[dict[str, Any]]:
         validate_project_name(project)
         return memory.list_all(limit=limit, project=project)
 
-    @app.get("/memory/{memory_id}", tags=["memory"])
+    # ── Rutas estándar de memoria ─────────────────────────────────────────────
+# Asegúrate de usar path pero sin restringir el enrutador
+    @app.get("/memory/{memory_id:path}", tags=["memory"])
     def get_memory_by_id(
         memory_id: str,
         memory: MemoryStore = Depends(get_memory),
-        _: Optional[str] = Depends(get_api_key),
+        _: str | None = Depends(get_api_key),
     ) -> dict[str, Any]:
-        if not memory_id.isalnum():
+        # Validación de seguridad: se ejecuta antes de cualquier operación
+        if any(char in memory_id for char in ["..", "/", "\\"]) or not memory_id.replace("-", "").isalnum():
             raise HTTPException(status_code=400, detail="Invalid memory ID format.")
+        
         result = memory.get(memory_id)
         if not result:
             raise HTTPException(status_code=404, detail="Memory not found.")
         return result
 
-    @app.delete("/memory/{memory_id}", tags=["memory"])
+    @app.delete("/memory/{memory_id:path}", tags=["memory"])
     def delete_memory(
         memory_id: str,
         memory: MemoryStore = Depends(get_memory),
-        _: Optional[str] = Depends(get_api_key),
+        _: str | None = Depends(get_api_key),
     ) -> dict[str, str]:
-        if not memory_id.isalnum():
+        # Validación de seguridad idéntica para DELETE
+        if any(char in memory_id for char in ["..", "/", "\\"]) or not memory_id.replace("-", "").isalnum():
             raise HTTPException(status_code=400, detail="Invalid memory ID format.")
+            
         deleted = memory.delete(memory_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Memory not found.")
@@ -185,7 +196,7 @@ def create_app() -> FastAPI:
         request: SearchRequest,
         req: Request,
         memory: MemoryStore = Depends(get_memory),
-        _: Optional[str] = Depends(get_api_key),
+        _: str | None = Depends(get_api_key),
     ) -> dict[str, Any]:
         validate_project_name(request.project)
         results = memory.search(request.query, request.n_results, request.project)
@@ -193,9 +204,9 @@ def create_app() -> FastAPI:
 
     @app.delete("/clear", tags=["memory"])
     def clear_memories(
-        project: Optional[str] = Query(None),
+        project: str | None = Query(None),
         memory: MemoryStore = Depends(get_memory),
-        _: Optional[str] = Depends(get_api_key),
+        _: str | None = Depends(get_api_key),
     ) -> dict[str, Any]:
         validate_project_name(project)
         count = memory.clear(project=project)
@@ -205,7 +216,7 @@ def create_app() -> FastAPI:
     def index(
         request: IndexRequest,
         rag: RAGPipeline = Depends(get_rag),
-        _: Optional[str] = Depends(get_api_key),
+        _: str | None = Depends(get_api_key),
     ) -> dict[str, Any]:
         validate_project_name(request.project)
         safe_path = validate_path_safety(request.path)
@@ -219,7 +230,7 @@ def create_app() -> FastAPI:
     def chat(
         request: ChatRequest,
         registry: AgentRegistry = Depends(get_registry),
-        _: Optional[str] = Depends(get_api_key),
+        _: str | None = Depends(get_api_key),
     ) -> dict[str, Any]:
         validate_project_name(request.project)
         return registry.chat_with_memory(
@@ -232,7 +243,7 @@ def create_app() -> FastAPI:
     @app.get("/agents", tags=["agents"])
     def list_agents(
         registry: AgentRegistry = Depends(get_registry),
-        _: Optional[str] = Depends(get_api_key),
+        _: str | None = Depends(get_api_key),
     ) -> dict[str, Any]:
         return {
             "ollama": {
@@ -246,7 +257,7 @@ def create_app() -> FastAPI:
     def export_memories(
         request: ExportRequest,
         memory: MemoryStore = Depends(get_memory),
-        _: Optional[str] = Depends(get_api_key),
+        _: str | None = Depends(get_api_key),
     ) -> dict[str, Any]:
         validate_project_name(request.project)
         safe_path = validate_path_safety(request.output_path)
